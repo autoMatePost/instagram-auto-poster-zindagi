@@ -146,11 +146,8 @@ def main():
         "ZINDAGI_USER_ID"
     ]
 
-    caption = os.getenv(
-        "ZINDAGI_CAPTION",
-        ""
-    )
-
+    caption = "#あらゆる追いかけっこを繰り広げる #reel #japan #america #usa #video"
+    
     count = int(
         os.getenv(
             "POST_COUNT",
