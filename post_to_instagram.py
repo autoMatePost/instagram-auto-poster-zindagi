@@ -175,13 +175,13 @@ def main():
     )
 
     test_response = requests.get(
-        f"{GRAPH_URL}/{user_id}",
-        params={
-            "fields": "id,username",
-            "access_token": token,
-        },
-        timeout=60,
-    )
+    f"{GRAPH_URL}/me",
+    params={
+        "fields": "user_id,username",
+        "access_token": token,
+    },
+    timeout=60,
+)
 
     print(
         "\nInstagram account response:"
