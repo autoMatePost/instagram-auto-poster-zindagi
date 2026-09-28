@@ -103,6 +103,20 @@ def publish_reel(user_id, file_url, caption, token, filename):
 
 
 def main():
+
+    print("Testing Instagram account...")
+
+test_url = f"https://graph.instagram.com/{user_id}"
+test_response = requests.get(
+    test_url,
+    params={
+        "fields": "id,username",
+        "access_token": access_token
+    }
+)
+
+print("Instagram account response:")
+print(test_response.text)
     token = os.environ["ZINDAGI_ACCESS_TOKEN"]
     user_id = os.environ["ZINDAGI_USER_ID"]
 
