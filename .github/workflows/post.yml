@@ -1,1 +1,35 @@
 
+name: Zindagi Instagram Poster
+
+on:
+  workflow_dispatch:
+    inputs:
+      post_count:
+        description: "Kitni Reels post karni hain?"
+        required: true
+        default: "1"
+        type: string
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Post Reels
+        env:
+          ZINDAGI_ACCESS_TOKEN: ${{ secrets.ZINDAGI_ACCESS_TOKEN }}
+          ZINDAGI_USER_ID: ${{ secrets.ZINDAGI_USER_ID }}
+          POST_COUNT: ${{ inputs.post_count }}
+        run: |
+          python post_to_instagram.py
