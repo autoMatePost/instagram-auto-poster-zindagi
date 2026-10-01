@@ -27,101 +27,15 @@ def get_reels():
     )
 
 
-def wait_until_6pm():
-
-    now = datetime.now(IST)
-
-    target = now.replace(
-        hour=18,
-        minute=0,
-        second=0,
-        microsecond=0
-    )
-
-    # If workflow is already started after 6 PM,
-    # do not wait.
-    if now >= target:
-        print(
-            "\nCurrent time is already 6:00 PM or later."
-        )
-        return
-
-    wait_seconds = (
-        target - now
-    ).total_seconds()
-
-    print(
-        "\n=========================================="
-    )
-
-    print(
-        "Waiting for 6:00 PM IST..."
-    )
-
-    print(
-        f"Current IST time: "
-        f"{now.strftime('%I:%M:%S %p')}"
-    )
-
-    print(
-        f"Reels will start at: "
-        f"06:00:00 PM IST"
-    )
-
-    print(
-        f"Waiting approximately "
-        f"{int(wait_seconds // 60)} minutes."
-    )
-
-    print(
-        "=========================================="
-    )
-
-    while True:
-
-        remaining = (
-            target -
-            datetime.now(IST)
-        ).total_seconds()
-
-        if remaining <= 0:
-            break
-
-        time.sleep(
-            min(remaining, 30)
-        )
-
-    print(
-        "\n=========================================="
-    )
-
-    print(
-        "6:00 PM IST reached!"
-    )
-
-    print(
-        "Starting Reel posting..."
-    )
-
-    print(
-        "=========================================="
-    )
-
-
-def wait_for_container(
-    creation_id,
-    token
-):
+def wait_for_container(creation_id, token):
 
     for attempt in range(20):
 
         response = requests.get(
             f"{GRAPH_URL}/{creation_id}",
             params={
-                "fields":
-                    "status_code,status",
-                "access_token":
-                    token,
+                "fields": "status_code,status",
+                "access_token": token,
             },
             timeout=60,
         )
@@ -135,20 +49,14 @@ def wait_for_container(
             f"{attempt + 1}/20: {data}"
         )
 
-        status_code = data.get(
-            "status_code"
-        )
+        status_code = data.get("status_code")
 
         if status_code == "FINISHED":
             return
 
-        if status_code in (
-            "ERROR",
-            "EXPIRED"
-        ):
+        if status_code in ("ERROR", "EXPIRED"):
             raise RuntimeError(
-                f"Instagram container failed: "
-                f"{data}"
+                f"Instagram container failed: {data}"
             )
 
         time.sleep(30)
@@ -166,9 +74,7 @@ def publish_reel(
     filename
 ):
 
-    print(
-        f"\nUploading: {filename}"
-    )
+    print(f"\nUploading: {filename}")
 
     response = requests.post(
         f"{GRAPH_URL}/{user_id}/media",
@@ -182,31 +88,20 @@ def publish_reel(
     )
 
     if not response.ok:
-
-        print(
-            "\nInstagram API Error:"
-        )
-
-        print(
-            response.text
-        )
+        print("\nInstagram API Error:")
+        print(response.text)
 
     response.raise_for_status()
 
-    creation_id = response.json().get(
-        "id"
-    )
+    creation_id = response.json().get("id")
 
     if not creation_id:
-
         raise RuntimeError(
-            f"Container ID missing "
-            f"for {filename}"
+            f"Container ID missing for {filename}"
         )
 
     print(
-        f"Container created: "
-        f"{creation_id}"
+        f"Container created: {creation_id}"
     )
 
     wait_for_container(
@@ -217,28 +112,53 @@ def publish_reel(
     response = requests.post(
         f"{GRAPH_URL}/{user_id}/media_publish",
         params={
-            "creation_id":
-                creation_id,
-            "access_token":
-                token,
+            "creation_id": creation_id,
+            "access_token": token,
         },
         timeout=60,
     )
 
     if not response.ok:
-
-        print(
-            "\nPublish Error:"
-        )
-
-        print(
-            response.text
-        )
+        print("\nPublish Error:")
+        print(response.text)
 
     response.raise_for_status()
 
-    print(
-        f"SUCCESS: {filename}"
+    print(f"SUCCESS: {filename}")
+
+
+def get_batch():
+
+    schedule = os.getenv(
+        "SCHEDULE_TIME",
+        ""
+    )
+
+    # 06:00 AM IST
+    if schedule == "30 0 2 10 *":
+        return 0, 12, "06:00 AM - 08:00 AM"
+
+    # 12:00 PM IST
+    if schedule == "30 6 2 10 *":
+        return 12, 24, "12:00 PM - 02:00 PM"
+
+    # 06:00 PM IST
+    if schedule == "30 12 2 10 *":
+        return 24, 36, "06:00 PM - 08:00 PM"
+
+    # Manual workflow
+    manual_start = int(
+        os.getenv("BATCH_START", "0")
+    )
+
+    manual_count = int(
+        os.getenv("POST_COUNT", "12")
+    )
+
+    return (
+        manual_start,
+        manual_start + manual_count,
+        "MANUAL"
     )
 
 
@@ -265,15 +185,8 @@ def main():
         "#reel #japan #america #usa #video"
     )
 
-    count = int(
-        os.getenv(
-            "POST_COUNT",
-            "1"
-        )
-    )
-
     # ==============================
-    # TEST INSTAGRAM ACCOUNT
+    # INSTAGRAM ACCOUNT TEST
     # ==============================
 
     print(
@@ -291,10 +204,8 @@ def main():
     test_response = requests.get(
         f"{GRAPH_URL}/me",
         params={
-            "fields":
-                "user_id,username",
-            "access_token":
-                token,
+            "fields": "user_id,username",
+            "access_token": token,
         },
         timeout=60,
     )
@@ -308,32 +219,89 @@ def main():
     )
 
     if not test_response.ok:
-
         raise RuntimeError(
-            "Instagram account/token "
-            "test failed."
+            "Instagram account/token test failed."
         )
 
     # ==============================
-    # GET REELS
+    # GET ALL REELS
     # ==============================
 
     reels = get_reels()
 
     if not reels:
-
         raise RuntimeError(
             "No numbered MP4 files found "
             "in images folder."
         )
 
-    if count > len(reels):
+    print(
+        f"\nTotal available Reels: "
+        f"{len(reels)}"
+    )
 
+    # ==============================
+    # SELECT BATCH
+    # ==============================
+
+    start, end, window = get_batch()
+
+    if start >= len(reels):
         raise RuntimeError(
-            f"You requested {count} Reels, "
-            f"but only {len(reels)} "
-            f"are available."
+            f"No Reels available for batch "
+            f"{start + 1}-{end}."
         )
+
+    selected = reels[start:min(end, len(reels))]
+
+    print(
+        "\n=========================================="
+    )
+
+    print(
+        f"Selected batch: "
+        f"{start + 1}-{start + len(selected)}"
+    )
+
+    print(
+        f"Posting window: {window}"
+    )
+
+    print(
+        f"Reels in this batch: "
+        f"{len(selected)}"
+    )
+
+    print(
+        "=========================================="
+    )
+
+    # ==============================
+    # CALCULATE GAP
+    # ==============================
+
+    count = len(selected)
+
+    if count > 1:
+
+        # 115 minutes gives a small buffer
+        # inside the 2-hour window.
+
+        total_window_seconds = 115 * 60
+
+        gap_seconds = (
+            total_window_seconds
+            / (count - 1)
+        )
+
+    else:
+
+        gap_seconds = 0
+
+    print(
+        f"\nGap between Reel starts: "
+        f"{gap_seconds / 60:.2f} minutes"
+    )
 
     # ==============================
     # GITHUB INFORMATION
@@ -348,103 +316,30 @@ def main():
         "main"
     )
 
-    print(
-        f"\nTotal available Reels: "
-        f"{len(reels)}"
-    )
-
-    print(
-        f"Reels requested: "
-        f"{count}"
-    )
-
     # ==============================
-    # WAIT UNTIL 6 PM IST
+    # POST SELECTED REELS
     # ==============================
 
-    wait_until_6pm()
-
-    # ==============================
-    # CALCULATE POSTING GAP
-    # ==============================
-
-    if count > 1:
-
-        # Use 115 minutes instead of
-        # the full 120 minutes so the
-        # final Reel has some buffer.
-
-        total_window_seconds = (
-            115 * 60
-        )
-
-        gap_seconds = (
-            total_window_seconds
-            / (count - 1)
-        )
-
-    else:
-
-        gap_seconds = 0
-
-    print(
-        "\n=========================================="
-    )
-
-    print(
-        "Posting schedule:"
-    )
-
-    print(
-        f"Number of Reels: {count}"
-    )
-
-    print(
-        f"Gap between Reel starts: "
-        f"{gap_seconds / 60:.2f} minutes"
-    )
-
-    print(
-        "Target window: "
-        "6:00 PM - approximately 7:55 PM IST"
-    )
-
-    print(
-        "=========================================="
-    )
-
-    # ==============================
-    # POST REELS
-    # ==============================
-
-    schedule_start = datetime.now(
-        IST
-    )
+    schedule_start = datetime.now(IST)
 
     for index, reel in enumerate(
-        reels[:count],
-        start=1
+        selected,
+        start=0
     ):
 
-        # Calculate the desired start
-        # time for this Reel.
-
-        if index > 1:
+        if index > 0:
 
             desired_time = (
                 schedule_start
                 + timedelta(
                     seconds=
-                    gap_seconds
-                    * (index - 1)
+                    gap_seconds * index
                 )
             )
 
             while True:
 
-                now = datetime.now(
-                    IST
-                )
+                now = datetime.now(IST)
 
                 remaining = (
                     desired_time - now
@@ -452,12 +347,6 @@ def main():
 
                 if remaining <= 0:
                     break
-
-                print(
-                    f"\nWaiting "
-                    f"{int(remaining)} seconds "
-                    f"for Reel {index}..."
-                )
 
                 time.sleep(
                     min(remaining, 30)
@@ -472,7 +361,9 @@ def main():
 
         print(
             f"\n========== "
-            f"{index}/{count} =========="
+            f"{start + index + 1}/"
+            f"{start + len(selected)} "
+            f"=========="
         )
 
         print(
@@ -484,10 +375,6 @@ def main():
             f"File: {reel.name}"
         )
 
-        print(
-            f"URL: {file_url}"
-        )
-
         publish_reel(
             user_id,
             file_url,
@@ -496,17 +383,12 @@ def main():
             reel.name
         )
 
-    # ==============================
-    # DONE
-    # ==============================
-
     print(
         "\n=========================================="
     )
 
     print(
-        f"DONE! {count} Reels posted "
-        f"to zindagikibaatein_."
+        f"DONE! {len(selected)} Reels posted."
     )
 
     print(
