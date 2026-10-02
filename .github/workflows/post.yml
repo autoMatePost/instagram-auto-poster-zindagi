@@ -2,33 +2,13 @@ name: Zindagi Instagram Poster
 
 on:
   workflow_dispatch:
-    inputs:
-      post_count:
-        description: "Manual mode me kitni Reels post karni hain?"
-        required: true
-        default: "12"
-        type: string
-
-      batch_start:
-        description: "Manual mode me kis Reel number se start karna hai? 0=001, 12=013, 24=025"
-        required: true
-        default: "0"
-        type: string
-
-  schedule:
-    # 2 October 2026 - 06:00 AM IST
-    - cron: "30 0 2 10 *"
-
-    # 2 October 2026 - 12:00 PM IST
-    - cron: "30 6 2 10 *"
-
-    # 2 October 2026 - 06:00 PM IST
-    - cron: "30 12 2 10 *"
-
 
 jobs:
   post:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
 
     steps:
 
@@ -48,11 +28,17 @@ jobs:
         env:
           ZINDAGI_ACCESS_TOKEN: ${{ secrets.ZINDAGI_ACCESS_TOKEN }}
           ZINDAGI_USER_ID: ${{ secrets.ZINDAGI_USER_ID }}
-
-          POST_COUNT: ${{ inputs.post_count }}
-          BATCH_START: ${{ inputs.batch_start }}
-
-          SCHEDULE_TIME: ${{ github.event.schedule }}
-
         run: |
           python post_to_instagram.py
+
+      - name: Save Reel links and state
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add state.json links.txt
+
+          git diff --cached --quiet || git commit -m "Save Reel links and posting state"
+
+          git push
