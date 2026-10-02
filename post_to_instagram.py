@@ -1,16 +1,19 @@
 import os
 import time
+import json
 import requests
 from pathlib import Path
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from urllib.parse import quote
 
 
 GRAPH_URL = "https://graph.instagram.com"
-IST = ZoneInfo("Asia/Kolkata")
+
+STATE_FILE = Path("state.json")
+LINKS_FILE = Path("links.txt")
 
 
 def get_reels():
+
     folder = Path("images")
 
     files = [
@@ -18,24 +21,83 @@ def get_reels():
         for file in folder.iterdir()
         if file.is_file()
         and file.suffix.lower() == ".mp4"
-        and file.stem.isdigit()
     ]
 
     return sorted(
         files,
-        key=lambda file: int(file.stem)
+        key=lambda file: file.name.lower()
     )
 
 
-def wait_for_container(creation_id, token):
+def load_state():
+
+    if not STATE_FILE.exists():
+        return {
+            "posted_files": []
+        }
+
+    try:
+
+        with open(
+            STATE_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            return json.load(f)
+
+    except Exception:
+
+        return {
+            "posted_files": []
+        }
+
+
+def save_state(posted_files):
+
+    with open(
+        STATE_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            {
+                "posted_files": posted_files
+            },
+            f,
+            indent=2,
+            ensure_ascii=False
+        )
+
+
+def save_link(filename, permalink):
+
+    with open(
+        LINKS_FILE,
+        "a",
+        encoding="utf-8"
+    ) as f:
+
+        f.write(
+            f"{filename} -> {permalink}\n"
+        )
+
+
+def wait_for_container(
+    creation_id,
+    token
+):
 
     for attempt in range(20):
 
         response = requests.get(
             f"{GRAPH_URL}/{creation_id}",
             params={
-                "fields": "status_code,status",
-                "access_token": token,
+                "fields":
+                    "status_code,status",
+                "access_token":
+                    token,
             },
             timeout=60,
         )
@@ -49,14 +111,21 @@ def wait_for_container(creation_id, token):
             f"{attempt + 1}/20: {data}"
         )
 
-        status_code = data.get("status_code")
+        status_code = data.get(
+            "status_code"
+        )
 
         if status_code == "FINISHED":
             return
 
-        if status_code in ("ERROR", "EXPIRED"):
+        if status_code in (
+            "ERROR",
+            "EXPIRED"
+        ):
+
             raise RuntimeError(
-                f"Instagram container failed: {data}"
+                f"Instagram container failed: "
+                f"{data}"
             )
 
         time.sleep(30)
@@ -64,6 +133,38 @@ def wait_for_container(creation_id, token):
     raise RuntimeError(
         "Instagram container did not finish."
     )
+
+
+def get_permalink(
+    media_id,
+    token
+):
+
+    response = requests.get(
+        f"{GRAPH_URL}/{media_id}",
+        params={
+            "fields": "permalink",
+            "access_token": token,
+        },
+        timeout=60,
+    )
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    permalink = data.get(
+        "permalink"
+    )
+
+    if not permalink:
+
+        raise RuntimeError(
+            f"Instagram permalink not found: "
+            f"{data}"
+        )
+
+    return permalink
 
 
 def publish_reel(
@@ -74,8 +175,11 @@ def publish_reel(
     filename
 ):
 
-    print(f"\nUploading: {filename}")
+    print(
+        f"\nUploading: {filename}"
+    )
 
+    # Create Reel container
     response = requests.post(
         f"{GRAPH_URL}/{user_id}/media",
         params={
@@ -88,78 +192,91 @@ def publish_reel(
     )
 
     if not response.ok:
-        print("\nInstagram API Error:")
-        print(response.text)
+
+        print(
+            "\nInstagram API Error:"
+        )
+
+        print(
+            response.text
+        )
 
     response.raise_for_status()
 
-    creation_id = response.json().get("id")
+    creation_id = response.json().get(
+        "id"
+    )
 
     if not creation_id:
+
         raise RuntimeError(
-            f"Container ID missing for {filename}"
+            f"Container ID missing "
+            f"for {filename}"
         )
 
     print(
-        f"Container created: {creation_id}"
+        f"Container created: "
+        f"{creation_id}"
     )
 
+    # Wait until Instagram finishes processing
     wait_for_container(
         creation_id,
         token
     )
 
+    # Publish Reel
     response = requests.post(
         f"{GRAPH_URL}/{user_id}/media_publish",
         params={
-            "creation_id": creation_id,
-            "access_token": token,
+            "creation_id":
+                creation_id,
+            "access_token":
+                token,
         },
         timeout=60,
     )
 
     if not response.ok:
-        print("\nPublish Error:")
-        print(response.text)
+
+        print(
+            "\nPublish Error:"
+        )
+
+        print(
+            response.text
+        )
 
     response.raise_for_status()
 
-    print(f"SUCCESS: {filename}")
-
-
-def get_batch():
-
-    schedule = os.getenv(
-        "SCHEDULE_TIME",
-        ""
+    media_id = response.json().get(
+        "id"
     )
 
-    # 06:00 AM IST
-    if schedule == "30 0 2 10 *":
-        return 0, 12, "06:00 AM - 08:00 AM"
+    if not media_id:
 
-    # 12:00 PM IST
-    if schedule == "30 6 2 10 *":
-        return 12, 24, "12:00 PM - 02:00 PM"
+        raise RuntimeError(
+            f"Published media ID missing "
+            f"for {filename}"
+        )
 
-    # 06:00 PM IST
-    if schedule == "30 12 2 10 *":
-        return 24, 36, "06:00 PM - 08:00 PM"
-
-    # Manual workflow
-    manual_start = int(
-        os.getenv("BATCH_START", "0")
+    print(
+        f"Published Media ID: "
+        f"{media_id}"
     )
 
-    manual_count = int(
-        os.getenv("POST_COUNT", "12")
+    # Get actual Instagram Reel URL
+    permalink = get_permalink(
+        media_id,
+        token
     )
 
-    return (
-        manual_start,
-        manual_start + manual_count,
-        "MANUAL"
+    print(
+        f"INSTAGRAM LINK: "
+        f"{permalink}"
     )
+
+    return permalink
 
 
 def main():
@@ -176,6 +293,15 @@ def main():
         "ZINDAGI_USER_ID"
     ]
 
+    repository = os.environ[
+        "GITHUB_REPOSITORY"
+    ]
+
+    branch = os.getenv(
+        "GITHUB_REF_NAME",
+        "main"
+    )
+
     # ==============================
     # FIXED CAPTION
     # ==============================
@@ -186,7 +312,7 @@ def main():
     )
 
     # ==============================
-    # INSTAGRAM ACCOUNT TEST
+    # TEST INSTAGRAM ACCOUNT
     # ==============================
 
     print(
@@ -204,8 +330,10 @@ def main():
     test_response = requests.get(
         f"{GRAPH_URL}/me",
         params={
-            "fields": "user_id,username",
-            "access_token": token,
+            "fields":
+                "user_id,username",
+            "access_token":
+                token,
         },
         timeout=60,
     )
@@ -219,181 +347,195 @@ def main():
     )
 
     if not test_response.ok:
+
         raise RuntimeError(
-            "Instagram account/token test failed."
+            "Instagram account/token "
+            "test failed."
         )
 
     # ==============================
-    # GET ALL REELS
+    # GET ALL MP4 REELS
     # ==============================
 
     reels = get_reels()
 
     if not reels:
+
         raise RuntimeError(
-            "No numbered MP4 files found "
+            "No MP4 files found "
             "in images folder."
         )
 
     print(
-        f"\nTotal available Reels: "
+        f"\nTotal MP4 Reels: "
         f"{len(reels)}"
     )
 
     # ==============================
-    # SELECT BATCH
+    # LOAD POSTED FILES
     # ==============================
 
-    start, end, window = get_batch()
+    state = load_state()
 
-    if start >= len(reels):
-        raise RuntimeError(
-            f"No Reels available for batch "
-            f"{start + 1}-{end}."
-        )
-
-    selected = reels[start:min(end, len(reels))]
-
-    print(
-        "\n=========================================="
-    )
-
-    print(
-        f"Selected batch: "
-        f"{start + 1}-{start + len(selected)}"
-    )
-
-    print(
-        f"Posting window: {window}"
-    )
-
-    print(
-        f"Reels in this batch: "
-        f"{len(selected)}"
-    )
-
-    print(
-        "=========================================="
+    posted_files = state.get(
+        "posted_files",
+        []
     )
 
     # ==============================
-    # CALCULATE GAP
+    # REMOVE ALREADY POSTED REELS
     # ==============================
 
-    count = len(selected)
-
-    if count > 1:
-
-        # 115 minutes gives a small buffer
-        # inside the 2-hour window.
-
-        total_window_seconds = 115 * 60
-
-        gap_seconds = (
-            total_window_seconds
-            / (count - 1)
-        )
-
-    else:
-
-        gap_seconds = 0
-
-    print(
-        f"\nGap between Reel starts: "
-        f"{gap_seconds / 60:.2f} minutes"
-    )
-
-    # ==============================
-    # GITHUB INFORMATION
-    # ==============================
-
-    repository = os.environ[
-        "GITHUB_REPOSITORY"
+    pending_reels = [
+        reel
+        for reel in reels
+        if reel.name not in posted_files
     ]
 
-    branch = os.getenv(
-        "GITHUB_REF_NAME",
-        "main"
+    print(
+        f"Already posted: "
+        f"{len(posted_files)}"
     )
 
-    # ==============================
-    # POST SELECTED REELS
-    # ==============================
+    print(
+        f"Pending Reels: "
+        f"{len(pending_reels)}"
+    )
 
-    schedule_start = datetime.now(IST)
+    if not pending_reels:
+
+        print(
+            "\n=========================================="
+        )
+
+        print(
+            "ALL REELS HAVE ALREADY BEEN POSTED."
+        )
+
+        print(
+            "=========================================="
+        )
+
+        return
+
+    # ==============================
+    # POST ONE BY ONE
+    # ==============================
 
     for index, reel in enumerate(
-        selected,
-        start=0
+        pending_reels,
+        start=1
     ):
 
-        if index > 0:
-
-            desired_time = (
-                schedule_start
-                + timedelta(
-                    seconds=
-                    gap_seconds * index
-                )
-            )
-
-            while True:
-
-                now = datetime.now(IST)
-
-                remaining = (
-                    desired_time - now
-                ).total_seconds()
-
-                if remaining <= 0:
-                    break
-
-                time.sleep(
-                    min(remaining, 30)
-                )
+        safe_filename = quote(
+            reel.name
+        )
 
         file_url = (
             f"https://raw.githubusercontent.com/"
             f"{repository}/"
             f"{branch}/images/"
-            f"{reel.name}"
+            f"{safe_filename}"
         )
 
         print(
-            f"\n========== "
-            f"{start + index + 1}/"
-            f"{start + len(selected)} "
-            f"=========="
+            "\n=========================================="
         )
 
         print(
-            f"Time: "
-            f"{datetime.now(IST).strftime('%I:%M:%S %p')}"
+            f"REEL {index}/{len(pending_reels)}"
         )
 
         print(
-            f"File: {reel.name}"
+            f"FILE: {reel.name}"
         )
 
-        publish_reel(
-            user_id,
-            file_url,
-            caption,
-            token,
-            reel.name
+        print(
+            "=========================================="
         )
+
+        try:
+
+            # Publish Reel
+            permalink = publish_reel(
+                user_id,
+                file_url,
+                caption,
+                token,
+                reel.name
+            )
+
+            # Save Instagram link
+            save_link(
+                reel.name,
+                permalink
+            )
+
+            # Mark file as posted
+            posted_files.append(
+                reel.name
+            )
+
+            save_state(
+                posted_files
+            )
+
+            print(
+                "\n=========================================="
+            )
+
+            print(
+                "SUCCESS"
+            )
+
+            print(
+                f"FILE: {reel.name}"
+            )
+
+            print(
+                f"LINK: {permalink}"
+            )
+
+            print(
+                "Saved to links.txt"
+            )
+
+            print(
+                "=========================================="
+            )
+
+            # Immediately continue to next Reel
+
+        except Exception as e:
+
+            print(
+                "\n=========================================="
+            )
+
+            print(
+                f"FAILED: {reel.name}"
+            )
+
+            print(
+                str(e)
+            )
+
+            print(
+                "Stopping workflow."
+            )
+
+            raise
 
     print(
         "\n=========================================="
     )
 
     print(
-        f"DONE! {len(selected)} Reels posted."
+        f"ALL {len(pending_reels)} REELS COMPLETED"
     )
 
     print(
-        f"Finished at: "
-        f"{datetime.now(IST).strftime('%I:%M:%S %p')}"
+        "Instagram links saved in links.txt"
     )
 
     print(
