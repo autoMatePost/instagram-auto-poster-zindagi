@@ -1,9 +1,11 @@
+
 import os
 import time
 import json
 import requests
 from pathlib import Path
 from urllib.parse import quote
+from requests.exceptions import RequestException
 
 
 GRAPH_URL = "https://graph.instagram.com"
@@ -11,10 +13,16 @@ GRAPH_URL = "https://graph.instagram.com"
 STATE_FILE = Path("state.json")
 LINKS_FILE = Path("links.txt")
 
+MAX_CONTAINER_CHECKS = 20
+CONTAINER_CHECK_INTERVAL = 30
+PUBLISH_RETRIES = 3
+
 
 def get_reels():
-
     folder = Path("images")
+
+    if not folder.exists():
+        raise RuntimeError("images folder does not exist.")
 
     files = [
         file
@@ -23,123 +31,113 @@ def get_reels():
         and file.suffix.lower() == ".mp4"
     ]
 
-    return sorted(
-        files,
-        key=lambda file: file.name.lower()
-    )
+    return sorted(files, key=lambda file: file.name.lower())
 
 
 def load_state():
-
     if not STATE_FILE.exists():
-        return {
-            "posted_files": []
-        }
+        return {"posted_files": []}
 
     try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
 
-        with open(
-            STATE_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
+        posted = state.get("posted_files", [])
 
-            return json.load(f)
+        if not isinstance(posted, list):
+            raise ValueError("posted_files must be a list.")
 
-    except Exception:
+        return {"posted_files": posted}
 
-        return {
-            "posted_files": []
-        }
+    except Exception as exc:
+        # Do not silently reset state; that could cause duplicates.
+        raise RuntimeError(
+            f"Could not safely read {STATE_FILE}: {exc}"
+        ) from exc
 
 
 def save_state(posted_files):
+    temp_file = STATE_FILE.with_suffix(".tmp")
 
-    with open(
-        STATE_FILE,
-        "w",
-        encoding="utf-8"
-    ) as f:
-
+    with open(temp_file, "w", encoding="utf-8") as f:
         json.dump(
-            {
-                "posted_files": posted_files
-            },
+            {"posted_files": posted_files},
             f,
             indent=2,
             ensure_ascii=False
         )
 
+    temp_file.replace(STATE_FILE)
+
 
 def save_link(filename, permalink):
+    # Avoid duplicate link entries if the same URL is already saved.
+    existing = set()
 
-    with open(
-        LINKS_FILE,
-        "a",
-        encoding="utf-8"
-    ) as f:
+    if LINKS_FILE.exists():
+        with open(LINKS_FILE, "r", encoding="utf-8") as f:
+            existing = {
+                line.strip()
+                for line in f
+                if line.strip()
+            }
 
-        f.write(
-            f"{filename} -> {permalink}\n"
-        )
+    entry = f"{filename} -> {permalink}"
+
+    if entry not in existing:
+        with open(LINKS_FILE, "a", encoding="utf-8") as f:
+            f.write(entry + "\n")
 
 
-def wait_for_container(
-    creation_id,
-    token
-):
+def api_error(response):
+    try:
+        return response.json()
+    except ValueError:
+        return response.text
 
-    for attempt in range(20):
 
+def wait_for_container(creation_id, token):
+    for attempt in range(MAX_CONTAINER_CHECKS):
         response = requests.get(
             f"{GRAPH_URL}/{creation_id}",
             params={
-                "fields":
-                    "status_code,status",
-                "access_token":
-                    token,
+                "fields": "status_code,status",
+                "access_token": token,
             },
             timeout=60,
         )
 
         response.raise_for_status()
-
         data = response.json()
 
+        status_code = data.get("status_code")
+        status_message = data.get("status", "")
+
         print(
-            f"Container status "
-            f"{attempt + 1}/20: {data}"
+            f"Container {creation_id} "
+            f"check {attempt + 1}/{MAX_CONTAINER_CHECKS}: "
+            f"{data}"
         )
 
-        status_code = data.get(
-            "status_code"
-        )
-
-        if status_code == "FINISHED":
+        if status_code in ("FINISHED", "PUBLISHED"):
             return
 
-        if status_code in (
-            "ERROR",
-            "EXPIRED"
-        ):
-
+        if status_code in ("ERROR", "EXPIRED"):
             raise RuntimeError(
-                f"Instagram container failed: "
-                f"{data}"
+                f"Instagram container processing failed. "
+                f"Container ID={creation_id}; "
+                f"status_code={status_code}; "
+                f"status={status_message}"
             )
 
-        time.sleep(30)
+        time.sleep(CONTAINER_CHECK_INTERVAL)
 
     raise RuntimeError(
-        "Instagram container did not finish."
+        f"Container {creation_id} did not finish in time."
     )
 
 
-def get_permalink(
-    media_id,
-    token
-):
-
+def get_permalink(media_id, token):
     response = requests.get(
         f"{GRAPH_URL}/{media_id}",
         params={
@@ -149,37 +147,25 @@ def get_permalink(
         timeout=60,
     )
 
+    if not response.ok:
+        print("Permalink API error:", api_error(response))
+
     response.raise_for_status()
 
-    data = response.json()
-
-    permalink = data.get(
-        "permalink"
-    )
+    permalink = response.json().get("permalink")
 
     if not permalink:
-
         raise RuntimeError(
-            f"Instagram permalink not found: "
-            f"{data}"
+            f"Permalink not returned for media ID {media_id}."
         )
 
     return permalink
 
 
-def publish_reel(
-    user_id,
-    file_url,
-    caption,
-    token,
-    filename
-):
+def publish_reel(user_id, file_url, caption, token, filename):
+    print(f"\nUploading: {filename}")
 
-    print(
-        f"\nUploading: {filename}"
-    )
-
-    # Create Reel container
+    # Create a new container for this Reel.
     response = requests.post(
         f"{GRAPH_URL}/{user_id}/media",
         params={
@@ -192,270 +178,153 @@ def publish_reel(
     )
 
     if not response.ok:
-
-        print(
-            "\nInstagram API Error:"
-        )
-
-        print(
-            response.text
-        )
+        print("Container creation error:", api_error(response))
 
     response.raise_for_status()
 
-    creation_id = response.json().get(
-        "id"
-    )
+    creation_id = response.json().get("id")
 
     if not creation_id:
-
         raise RuntimeError(
-            f"Container ID missing "
-            f"for {filename}"
+            f"Container ID missing for {filename}."
         )
 
-    print(
-        f"Container created: "
-        f"{creation_id}"
-    )
+    print(f"Container created: {creation_id}")
 
-    # Wait until Instagram finishes processing
-    wait_for_container(
-        creation_id,
-        token
-    )
+    wait_for_container(creation_id, token)
 
-    # Publish Reel
-    response = requests.post(
-        f"{GRAPH_URL}/{user_id}/media_publish",
-        params={
-            "creation_id":
-                creation_id,
-            "access_token":
-                token,
-        },
-        timeout=60,
-    )
+    # Retry publish only when the API explicitly rejects the request.
+    # A network timeout is ambiguous: Instagram may already have published.
+    for attempt in range(1, PUBLISH_RETRIES + 1):
+        try:
+            response = requests.post(
+                f"{GRAPH_URL}/{user_id}/media_publish",
+                params={
+                    "creation_id": creation_id,
+                    "access_token": token,
+                },
+                timeout=60,
+            )
 
-    if not response.ok:
+        except RequestException as exc:
+            raise RuntimeError(
+                f"Publish outcome is uncertain for {filename}. "
+                f"Check Instagram before retrying. Details: {exc}"
+            ) from exc
 
+        if response.ok:
+            media_id = response.json().get("id")
+
+            if not media_id:
+                raise RuntimeError(
+                    f"Publish response had no media ID: "
+                    f"{response.text}"
+                )
+
+            print(f"Published Media ID: {media_id}")
+            permalink = get_permalink(media_id, token)
+            print(f"INSTAGRAM LINK: {permalink}")
+
+            return permalink
+
+        error_data = api_error(response)
         print(
-            "\nPublish Error:"
+            f"Publish attempt {attempt}/{PUBLISH_RETRIES} failed: "
+            f"{error_data}"
         )
 
-        print(
-            response.text
-        )
+        # Do not repeatedly submit a request if the API reports a
+        # publishing limit or another non-retryable error.
+        try:
+            error = error_data.get("error", {})
+        except AttributeError:
+            error = {}
 
-    response.raise_for_status()
+        error_code = error.get("code")
+        error_subcode = error.get("error_subcode")
 
-    media_id = response.json().get(
-        "id"
+        if error_code == 9 or error_subcode == 2207042:
+            raise RuntimeError(
+                "Instagram publishing limit reached. "
+                "Stop and try again later."
+            )
+
+        if response.status_code not in (429, 500, 502, 503, 504):
+            raise RuntimeError(
+                f"Instagram rejected publishing for {filename}: "
+                f"{error_data}"
+            )
+
+        if attempt < PUBLISH_RETRIES:
+            time.sleep(30 * attempt)
+
+    raise RuntimeError(
+        f"Publish failed after {PUBLISH_RETRIES} attempts: {filename}"
     )
-
-    if not media_id:
-
-        raise RuntimeError(
-            f"Published media ID missing "
-            f"for {filename}"
-        )
-
-    print(
-        f"Published Media ID: "
-        f"{media_id}"
-    )
-
-    # Get actual Instagram Reel URL
-    permalink = get_permalink(
-        media_id,
-        token
-    )
-
-    print(
-        f"INSTAGRAM LINK: "
-        f"{permalink}"
-    )
-
-    return permalink
 
 
 def main():
+    token = os.environ["ZINDAGI_ACCESS_TOKEN"]
+    user_id = os.environ["ZINDAGI_USER_ID"]
+    repository = os.environ["GITHUB_REPOSITORY"]
+    branch = os.getenv("GITHUB_REF_NAME", "main")
 
-    # ==============================
-    # ENVIRONMENT VARIABLES
-    # ==============================
+    caption = "#あらゆる追いかけっこを繰り広げる"
 
-    token = os.environ[
-        "ZINDAGI_ACCESS_TOKEN"
-    ]
-
-    user_id = os.environ[
-        "ZINDAGI_USER_ID"
-    ]
-
-    repository = os.environ[
-        "GITHUB_REPOSITORY"
-    ]
-
-    branch = os.getenv(
-        "GITHUB_REF_NAME",
-        "main"
-    )
-
-    # ==============================
-    # FIXED CAPTION
-    # ==============================
-
-    caption = (
-        "#あらゆる追いかけっこを繰り広げる"
-    )
-
-    # ==============================
-    # TEST INSTAGRAM ACCOUNT
-    # ==============================
-
-    print(
-        "\n=========================================="
-    )
-
-    print(
-        "Testing Instagram account..."
-    )
-
-    print(
-        "=========================================="
-    )
+    print("\n==========================================")
+    print("Testing Instagram account...")
+    print("==========================================")
 
     test_response = requests.get(
         f"{GRAPH_URL}/me",
         params={
-            "fields":
-                "user_id,username",
-            "access_token":
-                token,
+            "fields": "user_id,username",
+            "access_token": token,
         },
         timeout=60,
     )
 
-    print(
-        "\nInstagram account response:"
-    )
-
-    print(
-        test_response.text
-    )
-
-    if not test_response.ok:
-
-        raise RuntimeError(
-            "Instagram account/token "
-            "test failed."
-        )
-
-    # ==============================
-    # GET ALL MP4 REELS
-    # ==============================
+    print("Instagram account response:", test_response.text)
+    test_response.raise_for_status()
 
     reels = get_reels()
 
     if not reels:
-
-        raise RuntimeError(
-            "No MP4 files found "
-            "in images folder."
-        )
-
-    print(
-        f"\nTotal MP4 Reels: "
-        f"{len(reels)}"
-    )
-
-    # ==============================
-    # LOAD POSTED FILES
-    # ==============================
+        raise RuntimeError("No MP4 files found in images folder.")
 
     state = load_state()
-
-    posted_files = state.get(
-        "posted_files",
-        []
-    )
-
-    # ==============================
-    # REMOVE ALREADY POSTED REELS
-    # ==============================
+    posted_files = state["posted_files"]
 
     pending_reels = [
-        reel
-        for reel in reels
+        reel for reel in reels
         if reel.name not in posted_files
     ]
 
-    print(
-        f"Already posted: "
-        f"{len(posted_files)}"
-    )
-
-    print(
-        f"Pending Reels: "
-        f"{len(pending_reels)}"
-    )
+    print(f"Total MP4 Reels: {len(reels)}")
+    print(f"Already posted: {len(posted_files)}")
+    print(f"Pending Reels: {len(pending_reels)}")
 
     if not pending_reels:
-
-        print(
-            "\n=========================================="
-        )
-
-        print(
-            "ALL REELS HAVE ALREADY BEEN POSTED."
-        )
-
-        print(
-            "=========================================="
-        )
-
+        print("All current Reels have already been posted.")
         return
 
-    # ==============================
-    # POST ONE BY ONE
-    # ==============================
+    failed_files = []
 
-    for index, reel in enumerate(
-        pending_reels,
-        start=1
-    ):
-
-        safe_filename = quote(
-            reel.name
-        )
+    for index, reel in enumerate(pending_reels, start=1):
+        safe_filename = quote(reel.name, safe="")
 
         file_url = (
             f"https://raw.githubusercontent.com/"
-            f"{repository}/"
-            f"{branch}/images/"
-            f"{safe_filename}"
+            f"{repository}/{quote(branch, safe='')}/"
+            f"images/{safe_filename}"
         )
 
-        print(
-            "\n=========================================="
-        )
-
-        print(
-            f"REEL {index}/{len(pending_reels)}"
-        )
-
-        print(
-            f"FILE: {reel.name}"
-        )
-
-        print(
-            "=========================================="
-        )
+        print("\n==========================================")
+        print(f"REEL {index}/{len(pending_reels)}")
+        print(f"FILE: {reel.name}")
+        print("==========================================")
 
         try:
-
-            # Publish Reel
             permalink = publish_reel(
                 user_id,
                 file_url,
@@ -464,82 +333,34 @@ def main():
                 reel.name
             )
 
-            # Save Instagram link
-            save_link(
-                reel.name,
-                permalink
-            )
+            # Save permalink first, then mark file as posted.
+            save_link(reel.name, permalink)
 
-            # Mark file as posted
-            posted_files.append(
-                reel.name
-            )
+            if reel.name not in posted_files:
+                posted_files.append(reel.name)
 
-            save_state(
-                posted_files
-            )
+            save_state(posted_files)
 
-            print(
-                "\n=========================================="
-            )
+            print(f"SUCCESS: {reel.name}")
+            print(f"LINK: {permalink}")
+            print("Link and state saved.")
 
-            print(
-                "SUCCESS"
-            )
+        except Exception as exc:
+            print(f"FAILED: {reel.name}")
+            print(f"REASON: {exc}")
+            print("Skipping this Reel and continuing.")
+            failed_files.append(reel.name)
 
-            print(
-                f"FILE: {reel.name}"
-            )
+    print("\n==========================================")
+    print(f"Successfully posted: {len(pending_reels) - len(failed_files)}")
+    print(f"Failed Reels: {len(failed_files)}")
+    print("Instagram links are saved in links.txt.")
+    print("==========================================")
 
-            print(
-                f"LINK: {permalink}"
-            )
-
-            print(
-                "Saved to links.txt"
-            )
-
-            print(
-                "=========================================="
-            )
-
-            # Immediately continue to next Reel
-
-        except Exception as e:
-
-            print(
-                "\n=========================================="
-            )
-
-            print(
-                f"FAILED: {reel.name}"
-            )
-
-            print(
-                str(e)
-            )
-
-            print(
-                "Stopping workflow."
-            )
-
-            raise
-
-    print(
-        "\n=========================================="
-    )
-
-    print(
-        f"ALL {len(pending_reels)} REELS COMPLETED"
-    )
-
-    print(
-        "Instagram links saved in links.txt"
-    )
-
-    print(
-        "=========================================="
-    )
+    if failed_files:
+        print("Failed filenames:")
+        for filename in failed_files:
+            print(f"- {filename}")
 
 
 if __name__ == "__main__":
