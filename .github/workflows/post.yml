@@ -1,19 +1,27 @@
+
 name: Zindagi Instagram Poster
 
 on:
   workflow_dispatch:
+    inputs:
+      post_count:
+        description: "Kitni Reels post karni hain? ALL = sabhi pending Reels"
+        required: true
+        default: "5"
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   post:
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: write
-
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -21,24 +29,26 @@ jobs:
           python-version: "3.x"
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
-      - name: Post Reels
+      - name: Post selected Reels
         env:
           ZINDAGI_ACCESS_TOKEN: ${{ secrets.ZINDAGI_ACCESS_TOKEN }}
           ZINDAGI_USER_ID: ${{ secrets.ZINDAGI_USER_ID }}
-        run: |
-          python post_to_instagram.py
+          POST_COUNT: ${{ inputs.post_count }}
+        run: python post_to_instagram.py
 
-      - name: Save Reel links and state
+      - name: Save links, state and remove posted videos
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add state.json links.txt
+          git add -A images state.json links.txt
 
-          git diff --cached --quiet || git commit -m "Save Reel links and posting state"
-
-          git push
+          if ! git diff --cached --quiet; then
+            git commit -m "Save Reel links and remove successfully posted videos"
+            git push origin HEAD:main
+          else
+            echo "No changes to save."
+          fi
