@@ -2,20 +2,28 @@
 name: Zindagi Instagram Poster
 
 on:
+  schedule:
+    - cron: "30 10 * * *"
+
   workflow_dispatch:
     inputs:
       post_count:
-        description: "Kitni Reels post karni hain? ALL = sabhi pending Reels"
-        required: true
-        default: "5"
+        description: "Manual run count (blank = use DAILY_POST_COUNT; ALL = all pending)"
+        required: false
+        default: ""
         type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: zindagi-instagram-poster
+  cancel-in-progress: false
+
 jobs:
   post:
     runs-on: ubuntu-latest
+    timeout-minutes: 240
 
     steps:
       - name: Checkout repository
@@ -31,11 +39,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Post selected Reels
+      - name: Post scheduled Reels
         env:
           ZINDAGI_ACCESS_TOKEN: ${{ secrets.ZINDAGI_ACCESS_TOKEN }}
           ZINDAGI_USER_ID: ${{ secrets.ZINDAGI_USER_ID }}
-          POST_COUNT: ${{ inputs.post_count }}
+          DAILY_POST_COUNT: ${{ vars.DAILY_POST_COUNT }}
+          MANUAL_POST_COUNT: ${{ inputs.post_count }}
+          MAX_TOTAL_POSTS: "70"
+          MIN_GAP_SECONDS: "120"
+          MAX_GAP_SECONDS: "360"
         run: python post_to_instagram.py
 
       - name: Save links, state and remove posted videos
@@ -47,7 +59,8 @@ jobs:
           git add -A images state.json links.txt
 
           if ! git diff --cached --quiet; then
-            git commit -m "Save Reel links and remove successfully posted videos"
+            git commit -m "Save Reel links, state and remove posted videos"
+            git pull --rebase origin main
             git push origin HEAD:main
           else
             echo "No changes to save."
