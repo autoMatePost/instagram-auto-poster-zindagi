@@ -1,4 +1,4 @@
-
+﻿
 name: Zindagi Instagram Poster
 
 on:
@@ -45,9 +45,9 @@ jobs:
           ZINDAGI_USER_ID: ${{ secrets.ZINDAGI_USER_ID }}
           DAILY_POST_COUNT: ${{ vars.DAILY_POST_COUNT }}
           MANUAL_POST_COUNT: ${{ inputs.post_count }}
-          MAX_TOTAL_POSTS: "70"
+          MAX_TOTAL_POSTS: "59"
           MIN_GAP_SECONDS: "120"
-          MAX_GAP_SECONDS: "360"
+          MAX_GAP_SECONDS: "120"
         run: python post_to_instagram.py
 
       - name: Save links, state and remove posted videos
@@ -65,3 +65,4 @@ jobs:
           else
             echo "No changes to save."
           fi
+

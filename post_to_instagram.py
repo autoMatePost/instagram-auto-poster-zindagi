@@ -1,4 +1,4 @@
-import os
+﻿import os
 import time
 import json
 import random
@@ -21,7 +21,7 @@ STOP_TIME = dt_time(20, 0)
 MAX_CONTAINER_CHECKS = 20
 CONTAINER_CHECK_INTERVAL = 30
 PUBLISH_RETRIES = 3
-TOTAL_POST_LIMIT = 70
+TOTAL_POST_LIMIT = 59
 
 
 def now_ist():
@@ -255,7 +255,7 @@ def publish_reel(user_id, file_url, caption, token, filename):
 
 def get_requested_count():
     manual = os.getenv("MANUAL_POST_COUNT", "").strip().upper()
-    requested = manual or os.getenv("DAILY_POST_COUNT", "15").strip().upper()
+    requested = manual or os.getenv("DAILY_POST_COUNT", "20").strip().upper()
 
     if requested == "ALL":
         return "ALL"
@@ -361,7 +361,7 @@ def main():
             media_id, permalink = publish_reel(
                 user_id,
                 file_url,
-                "#あらゆる追いかけっこを繰り広げる",
+                "#ã‚ã‚‰ã‚†ã‚‹è¿½ã„ã‹ã‘ã£ã“ã‚’ç¹°ã‚Šåºƒã’ã‚‹",
                 token,
                 filename
             )
@@ -420,9 +420,10 @@ def main():
     print("Failed this run:", len(failed_files))
     print("Successfully posted today:", daily_posts.get(today, 0))
     print("Successfully posted from this batch:", len(batch_posted_files))
-    print("Remaining to 70:", max(0, TOTAL_POST_LIMIT - len(batch_posted_files)))
+    print("Remaining to 59:", max(0, TOTAL_POST_LIMIT - len(batch_posted_files)))
     print("===================================")
 
 
 if __name__ == "__main__":
     main()
+
