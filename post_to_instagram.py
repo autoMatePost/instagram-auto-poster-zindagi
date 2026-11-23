@@ -60,7 +60,7 @@ def load_state():
 
         # New batch tracking is authoritative. Legacy posted_files data
         # is deliberately not used for the new 70-Reel batch.
-        if "batch_files" not in old_state:
+        if "batch_files" not in old_state or not old_state.get("batch_files"):
             return {
                 "batch_files": current_files,
                 "batch_posted_files": [],
@@ -426,4 +426,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
